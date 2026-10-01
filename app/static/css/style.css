@@ -257,7 +257,7 @@ body {
   cursor: default;
 }
 
-/* 最大段数(3段)を超えて重ねて置いたバー */
+/* 最大段数(5段)を超えて重ねて置いたバー */
 .task-bar.overflow {
   z-index: 1; /* 同じ段の他のバーより手前に出して、隠れないようにする */
   border: 1px dashed #333;

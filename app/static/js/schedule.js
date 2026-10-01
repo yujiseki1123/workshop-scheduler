@@ -12,7 +12,7 @@
  *   - "assignee" : 担当者 → WS の2階層。1つのタスクに複数担当者がいる場合は、
  *                  該当する担当者すべてのグループにバーを複製して表示する
  *                  (担当者ごとの持ちタスク量を横断的に見えるようにするため)。
- * 同じ行の中で期間が重なるタスクは段(レーン)を分けて並べる。段は最大 MAX_LANES(3)段。
+ * 同じ行の中で期間が重なるタスクは段(レーン)を分けて並べる。段は最大 MAX_LANES(5)段。
  * 開始日が未定のタスク(start_date=null)はバーを出さず、WS名の下に「未定 N件」を表示する
  * (ホバーでタスク名の一覧)。
  * どちらのモードでも取得済みのAPIレスポンス(projects/tasks)をそのまま使い、
@@ -290,7 +290,7 @@ function buildProjectColors(data) {
 
 // 同じ行内でタスク期間が重なった場合のレーン(段)の設定。
 // 重なりが無い行は CSSの --task-row-height の1段のまま、重なる行だけ段数ぶん高さを広げる。
-const MAX_LANES = 3; // 1行あたりの最大段数
+const MAX_LANES = 5; // 1行あたりの最大段数
 const LANE_HEIGHT = 26;
 const LANE_GAP = 4;
 const LANE_TOP_PAD = 5;
@@ -464,7 +464,7 @@ function buildBody(data, timelineStart, todayOffset, mode) {
     };
   };
 
-  /** WS 1行分(左にWS名、右にタスクバー。重なる分は最大3段)を作る。 */
+  /** WS 1行分(左にWS名、右にタスクバー。重なる分は最大5段)を作る。 */
   const buildWsRow = (project, tasks) => {
     const color = projectColor.get(project.project_id);
     const row = document.createElement("div");
