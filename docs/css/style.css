@@ -6,6 +6,7 @@
   --task-row-height: 44px;
   --border-color: #d7d7d7;
   --today-line-color: #e05252;
+  --bar-font-size: 12px;
 }
 
 * {
@@ -250,7 +251,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--bar-font-size);
   overflow: hidden;
   white-space: nowrap;
   padding: 0 4px;
@@ -496,4 +497,188 @@ body {
   border: none;
   cursor: pointer;
   text-decoration: underline;
+}
+
+.reset-btn {
+  margin: 0 24px 24px;
+}
+
+/* 右上の「Excelを開く」(PC: 操作ボタンの右端 / スマホ: タイトルの右) */
+.page-header-top h1 {
+  order: 1;
+  flex: 1 1 auto;
+}
+
+.header-actions {
+  order: 2;
+}
+
+.excel-btn {
+  order: 3;
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #1d6f42; /* Excel の緑 */
+  border: 1px solid #1d6f42;
+  border-radius: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.excel-btn:hover {
+  background: #185c37;
+}
+
+.excel-btn[hidden] {
+  display: none;
+}
+
+.device-toggle-btn[aria-pressed="true"] {
+  background: #eef3fb;
+  border-color: #2f5fb3;
+  color: #2f5fb3;
+}
+
+/* ------------------------------------------------------------------ */
+/* スマホ表示(body.mobile)                                            */
+/* ------------------------------------------------------------------ */
+
+body.mobile .page-header {
+  padding: 10px 10px 6px;
+}
+
+body.mobile .page-header h1 {
+  font-size: 16px;
+  margin: 0;
+}
+
+body.mobile .excel-btn {
+  order: 2;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+body.mobile .header-actions {
+  order: 3;
+  flex: 1 1 100%;
+  gap: 6px;
+}
+
+body.mobile .header-btn,
+body.mobile .view-toggle-btn {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+body.mobile .account-name {
+  flex: 1 1 100%;
+  font-size: 11px;
+}
+
+body.mobile .page-sub:not(.source-info) {
+  display: none; /* 説明文は省く */
+}
+
+body.mobile .source-info {
+  font-size: 11px;
+}
+
+body.mobile .filter-bar {
+  margin-top: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+body.mobile .filter summary {
+  white-space: nowrap;
+}
+
+body.mobile .status-legend {
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding-top: 0;
+}
+
+body.mobile .legend-item {
+  white-space: nowrap;
+}
+
+body.mobile .legend-swatch {
+  width: 16px;
+  height: 10px;
+}
+
+body.mobile .warnings {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+body.mobile .schedule-wrapper {
+  margin: 8px 6px 24px;
+}
+
+body.mobile .week-block {
+  font-size: 11px;
+  padding: 4px 0;
+}
+
+body.mobile .day-cell {
+  font-size: 10px;
+  padding: 3px 0;
+}
+
+body.mobile .day-cell .weekday {
+  font-size: 9px;
+}
+
+body.mobile .corner-col {
+  font-size: 10px;
+  padding: 0 2px 3px;
+}
+
+body.mobile .group-label {
+  font-size: 11px;
+  padding: 0 3px;
+}
+
+body.mobile .group-label.ws-label {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+body.mobile .undecided-badge {
+  font-size: 9px;
+  padding: 0 4px;
+}
+
+body.mobile .task-bar {
+  top: 4px;
+  height: calc(var(--task-row-height) - 8px);
+  border-left-width: 4px !important;
+  cursor: pointer;
+}
+
+body.mobile .undecided-badge {
+  cursor: pointer;
+}
+
+/* スマホ表示の詳細: 画面下に出すシート */
+body.mobile .tooltip {
+  left: 0 !important;
+  right: 0;
+  top: auto !important;
+  bottom: 0;
+  max-width: none;
+  border-radius: 10px 10px 0 0;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  font-size: 13px;
+  pointer-events: auto;
+}
+
+body.mobile .auth-panel {
+  margin: 12px;
+  padding: 14px;
 }

@@ -17,7 +17,12 @@
  * 再フェッチはしない(表示切替はクライアント側の並び替えに過ぎないため)。
  */
 
-const DAY_WIDTH = 56; // CSSの --day-width と合わせる
+// 表示サイズ(PC / スマホ)ごとの寸法。applyDeviceLayout() で切り替える(CSS変数も合わせて変える)
+const LAYOUTS = {
+  pc: { dayWidth: 56, assigneeCol: 110, wsCol: 140, rowHeight: 44, laneHeight: 26, laneGap: 4, lanePad: 5, barFont: 12 },
+  mobile: { dayWidth: 34, assigneeCol: 64, wsCol: 88, rowHeight: 36, laneHeight: 22, laneGap: 3, lanePad: 4, barFont: 11 },
+};
+let DAY_WIDTH = LAYOUTS.pc.dayWidth; // CSSの --day-width と合わせる
 const WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]; // 月曜始まり
 const PROJECT_COLORS = ["#c9d9f2", "#cfc3e0", "#f0cbd8", "#c9ecd7", "#f5e3b3"];
 const ASSIGNEE_ROW_COLOR = "#e8e8ec"; // 担当者別表示の行ラベル背景(プロジェクト色と混同しないよう単色)
@@ -35,10 +40,10 @@ const STATUS_STYLES = {
 const DEFAULT_STATUS = "未着手";
 // 日付決定有無=Yes のタスク(リハーサル・WS実施など)はステータスにかかわらず赤で表示する
 const DECISION_STYLE = { background: "#f28b82", color: "#5c0000" };
-const BAR_FONT = "12px -apple-system, sans-serif";
+let BAR_FONT = "12px -apple-system, sans-serif";
 // 行ラベル列の幅。プロジェクト別=「WS」、担当者別=「担当者 | WS」
-const ASSIGNEE_COL_WIDTH = 110;
-const WS_COL_WIDTH = 140;
+let ASSIGNEE_COL_WIDTH = LAYOUTS.pc.assigneeCol;
+let WS_COL_WIDTH = LAYOUTS.pc.wsCol;
 
 function labelColumns(mode) {
   return mode === "assignee" ? [ASSIGNEE_COL_WIDTH, WS_COL_WIDTH] : [WS_COL_WIDTH];
@@ -213,7 +218,32 @@ function positionTooltip(evt) {
 }
 
 function hideTooltip() {
+  if (currentDevice === "mobile") return; // スマホはタップで開閉する
   document.getElementById("tooltip").hidden = true;
+}
+
+/** スマホ表示: タップした要素の詳細を画面下に出す(ホバーが無いため)。もう一度どこかをタップすると閉じる。 */
+function showSheet(evt, text) {
+  evt.stopPropagation();
+  const tooltip = document.getElementById("tooltip");
+  tooltip.textContent = text + "\n\n(タップで閉じる)";
+  tooltip.style.left = tooltip.style.top = "";
+  tooltip.style.whiteSpace = "pre-line";
+  tooltip.hidden = false;
+}
+
+/** ホバー(PC)とタップ(スマホ)の両方で詳細を出せるようにする。 */
+function attachDetails(el, text) {
+  el.addEventListener("mouseenter", (evt) => {
+    if (currentDevice !== "mobile") showTooltip(evt, text);
+  });
+  el.addEventListener("mousemove", (evt) => {
+    if (currentDevice !== "mobile") positionTooltip(evt);
+  });
+  el.addEventListener("mouseleave", hideTooltip);
+  el.addEventListener("click", (evt) => {
+    if (currentDevice === "mobile") showSheet(evt, text);
+  });
 }
 
 /**
@@ -285,9 +315,9 @@ function buildProjectColors(data) {
 // 同じ行内でタスク期間が重なった場合のレーン(段)の設定。
 // 重なりが無い行は CSSの --task-row-height の1段のまま、重なる行だけ段数ぶん高さを広げる。
 const MAX_LANES = 3; // 1行あたりの最大段数
-const LANE_HEIGHT = 26;
-const LANE_GAP = 4;
-const LANE_TOP_PAD = 5;
+let LANE_HEIGHT = LAYOUTS.pc.laneHeight;
+let LANE_GAP = LAYOUTS.pc.laneGap;
+let LANE_TOP_PAD = LAYOUTS.pc.lanePad;
 
 /**
  * 1行分のタスクバー群に、重ならないよう貪欲法でレーン番号を割り当てる。
@@ -347,16 +377,14 @@ function buildBarElement(bar, laneCount) {
 
   const textWidth = measureTextWidth(bar.label, BAR_FONT);
   if (bar.width < textWidth + 8) {
-    // ラベルが入りきらない → "*" だけ表示し、詳細はホバーで見せる
+    // ラベルが入りきらない → "*" だけ表示し、詳細はホバー(スマホはタップ)で見せる
     el.classList.add("compact");
     el.textContent = "*";
   } else {
     el.textContent = bar.label;
   }
 
-  el.addEventListener("mouseenter", (evt) => showTooltip(evt, bar.text));
-  el.addEventListener("mousemove", positionTooltip);
-  el.addEventListener("mouseleave", hideTooltip);
+  attachDetails(el, bar.text);
   return el;
 }
 
@@ -396,9 +424,7 @@ function buildUndecidedBadge(tasks) {
         return `・${mark}${t.task_name} (${t.work_days}日間)${names ? " " + names : ""}`;
       })
       .join("\n");
-  badge.addEventListener("mouseenter", (e) => showTooltip(e, text));
-  badge.addEventListener("mousemove", positionTooltip);
-  badge.addEventListener("mouseleave", hideTooltip);
+  attachDetails(badge, text);
   return badge;
 }
 
@@ -524,6 +550,7 @@ function buildBody(data, timelineStart, todayOffset, mode) {
 // 並び替えだけなので、サーバーに問い合わせる必要がない)。
 let scheduleCache = null; // { data, start, days, todayOffset }
 let currentMode = "project"; // "project" | "assignee"
+let currentDevice = "pc"; // "pc" | "mobile"(表示サイズ。切替ボタンで変更し、ブラウザに記憶する)
 
 // 表示の絞り込み。モードごとに「選択中のキーの集合」を持つ。null = すべて表示。
 // プロジェクト別 = WS(project_id)、担当者別 = 担当者(member_id / 未割当)。
@@ -649,6 +676,72 @@ function renderGrid({ preserveScroll = false } = {}) {
   }
 }
 
+const DEVICE_KEY = "workshopScheduler.device";
+
+/** 最初の表示サイズ: 前回選んだもの。無ければ画面幅で決める(幅 768px 以下はスマホ)。 */
+function initialDevice() {
+  try {
+    const saved = localStorage.getItem(DEVICE_KEY);
+    if (saved === "pc" || saved === "mobile") return saved;
+  } catch (_) {
+    /* 保存できない環境 */
+  }
+  return window.matchMedia("(max-width: 768px)").matches ? "mobile" : "pc";
+}
+
+/** 表示サイズの寸法を JS の定数と CSS 変数の両方に反映する。 */
+function applyDeviceLayout(device) {
+  currentDevice = device;
+  const L = LAYOUTS[device];
+  DAY_WIDTH = L.dayWidth;
+  ASSIGNEE_COL_WIDTH = L.assigneeCol;
+  WS_COL_WIDTH = L.wsCol;
+  LANE_HEIGHT = L.laneHeight;
+  LANE_GAP = L.laneGap;
+  LANE_TOP_PAD = L.lanePad;
+  BAR_FONT = `${L.barFont}px -apple-system, sans-serif`;
+  const root = document.documentElement.style;
+  root.setProperty("--day-width", `${L.dayWidth}px`);
+  root.setProperty("--task-row-height", `${L.rowHeight}px`);
+  root.setProperty("--bar-font-size", `${L.barFont}px`);
+  document.body.classList.toggle("mobile", device === "mobile");
+  document.getElementById("tooltip").hidden = true;
+  const btn = document.getElementById("device-toggle-btn");
+  if (btn) {
+    btn.textContent = device === "mobile" ? "PC表示" : "スマホ表示";
+    btn.setAttribute("aria-pressed", device === "mobile" ? "true" : "false");
+  }
+}
+
+function initDeviceToggle() {
+  applyDeviceLayout(initialDevice());
+  document.getElementById("device-toggle-btn").addEventListener("click", () => {
+    const next = currentDevice === "mobile" ? "pc" : "mobile";
+    try {
+      localStorage.setItem(DEVICE_KEY, next);
+    } catch (_) {
+      /* 保存できなくても切替はする */
+    }
+    applyDeviceLayout(next);
+    // 寸法が変わるので描き直し、今日の付近へスクロールし直す
+    renderGrid({ preserveScroll: false });
+  });
+  // スマホ表示: 詳細の外をタップしたら閉じる
+  document.addEventListener("click", () => {
+    if (currentDevice === "mobile") document.getElementById("tooltip").hidden = true;
+  });
+}
+
+/** 右上の「Excelを開く」: 共有リンクを新しいタブで開く(ブラウザ版 Excel / スマホは Excel アプリ)。 */
+function initExcelLink() {
+  const link = document.getElementById("excel-link");
+  const { shareUrl } = OneDriveSource.settings();
+  if (link && shareUrl) {
+    link.href = shareUrl;
+    link.hidden = false;
+  }
+}
+
 function updateToggleButtonLabel(btn) {
   const isAssignee = currentMode === "assignee";
   btn.textContent = isAssignee ? "表示切替: プロジェクト別" : "表示切替: 担当者別";
@@ -702,11 +795,50 @@ function renderSourceInfo(data) {
   }
 }
 
-function showMessage(text) {
+function showMessage(text, { withReset = false } = {}) {
   const p = document.createElement("p");
   p.className = "loading";
   p.textContent = text;
-  document.getElementById("schedule-root").replaceChildren(p);
+  const nodes = [p];
+  if (withReset) nodes.push(buildResetButton());
+  document.getElementById("schedule-root").replaceChildren(...nodes);
+}
+
+/** 保存した設定(クライアント ID・共有リンク)とサインイン情報をこのブラウザから消す。 */
+function resetSettings() {
+  OneDriveSource.saveSettings({ clientId: "", shareUrl: "" });
+  try {
+    // MSAL がこのブラウザに保存したサインイン情報(msal. で始まるキー)
+    Object.keys(localStorage).filter((k) => k.startsWith("msal.") || k.includes("login.windows.net") || k.includes("login.microsoftonline.com")).forEach((k) => localStorage.removeItem(k));
+    sessionStorage.clear();
+  } catch (_) {
+    /* 消せない環境でも続ける */
+  }
+}
+
+function buildResetButton() {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "header-btn reset-btn";
+  btn.textContent = "設定をやり直す(保存した設定を消す)";
+  btn.addEventListener("click", () => {
+    resetSettings();
+    window.location.replace(window.location.pathname);
+  });
+  return btn;
+}
+
+// localhost 以外の書き方(127.0.0.1 / 0.0.0.0 / [::])で開いたときは localhost に移す。
+// サインイン後の戻り先(リダイレクト URI)は localhost で登録しているうえ、[::] や 0.0.0.0 は
+// ブラウザが「安全な接続」と見なさず、サインインに必要な暗号機能(crypto)が使えないため。
+const LOCAL_ALIASES = ["127.0.0.1", "0.0.0.0", "[::]", "[::1]", "::", "::1"];
+
+function redirectToLocalhostIfNeeded() {
+  if (!LOCAL_ALIASES.includes(window.location.hostname)) return false;
+  const url = new URL(window.location.href);
+  url.hostname = "localhost";
+  window.location.replace(url.href);
+  return true;
 }
 
 /** preserveScroll=true は「再読み込み」ボタン(表示モード・絞り込み・横スクロール位置を保つ)。 */
@@ -722,7 +854,7 @@ async function renderSchedule({ preserveScroll = false } = {}) {
   try {
     data = await fetchSchedule();
   } catch (err) {
-    showMessage(`読み込みに失敗しました: ${err.message}`);
+    showMessage(`読み込みに失敗しました: ${err.message}`, { withReset: !OneDriveSource.settings().fromConfig });
     return;
   }
 
@@ -794,6 +926,21 @@ function initAccountButtons() {
 
 /** 起動: 設定 → サインイン → Excel の読み込み、の順に必要なものを確認する。 */
 async function start() {
+  if (redirectToLocalhostIfNeeded()) return;
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("reset")) {
+    // ?reset 付きで開くと保存した設定を消してやり直す
+    resetSettings();
+    window.location.replace(window.location.pathname);
+    return;
+  }
+  if (!window.isSecureContext) {
+    showMessage(
+      "このアドレスではサインインできません(https か http://localhost で開く必要があります)。" +
+        "手元で試すときは http://localhost:8000/ を開いてください。"
+    );
+    return;
+  }
   const { clientId, shareUrl } = OneDriveSource.settings();
   if (!clientId || !shareUrl) {
     renderSettingsForm();
@@ -803,7 +950,7 @@ async function start() {
   try {
     account = await OneDriveSource.init();
   } catch (e) {
-    showMessage(`サインインの処理に失敗しました: ${e.message}`);
+    showMessage(`サインインの処理に失敗しました: ${e.message}`, { withReset: true });
     return;
   }
   updateAccountBar(account);
@@ -822,7 +969,9 @@ document.addEventListener("click", (evt) => {
 });
 
 document.addEventListener("DOMContentLoaded", () => {
+  initDeviceToggle();
   initViewToggle();
   initAccountButtons();
+  initExcelLink();
   start();
 });
