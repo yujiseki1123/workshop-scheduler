@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>フェーズ2 検証: OneDrive の Excel を読む</title>
+<!-- サインイン(MSAL.js)と Excel の解析(SheetJS) -->
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@4.30.0/lib/msal-browser.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 24px; max-width: 960px; color: #222; }
+  h1 { font-size: 20px; }
+  label { display: block; font-size: 13px; margin-top: 12px; color: #555; }
+  input[type=text] { width: 100%; padding: 6px 8px; font-size: 13px; box-sizing: border-box; }
+  .row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+  button { padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  #who { font-size: 13px; color: #555; }
+  #log { margin-top: 20px; padding: 0; list-style: none; font-size: 13px; }
+  #log li { padding: 6px 8px; border-bottom: 1px solid #eee; white-space: pre-wrap; }
+  .ok::before { content: "✓ "; color: #1a7f37; font-weight: bold; }
+  .ng::before { content: "✗ "; color: #c62828; font-weight: bold; }
+  .info::before { content: "・ "; color: #888; }
+  table { border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+  th, td { border: 1px solid #ddd; padding: 4px 6px; text-align: left; }
+  th { background: #f4f4f4; }
+  .note { font-size: 12px; color: #666; }
+</style>
+</head>
+<body>
+<h1>フェーズ2 検証: OneDrive の Excel を読めるか</h1>
+<p class="note">サインイン → 共有リンクからファイルを特定 → ダウンロード → 「タスク一覧」を解析、の順に試し、各段階の成否を下に表示します。
+入力値はこのブラウザにだけ保存されます。</p>
+
+<label>アプリケーション (クライアント) ID</label>
+<input id="clientId" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+<label>Excel の共有リンク(OneDrive の「リンクのコピー」)</label>
+<input id="shareUrl" type="text" placeholder="https://1drv.ms/x/..." />
+<label><input id="rw" type="checkbox" /> Files.ReadWrite も要求する(Files.Read.All だけで共有リンクが開けなかったときに試す)</label>
+
+<div class="row">
+  <button id="signin">サインイン</button>
+  <button id="run" disabled>読み取りテスト</button>
+  <button id="signout" disabled>サインアウト</button>
+  <span id="who"></span>
+</div>
+
+<ul id="log"></ul>
+<div id="result"></div>
+
+<script>
+const GRAPH = "https://graph.microsoft.com/v1.0";
+const $ = (id) => document.getElementById(id);
+const store = {
+  get: (k) => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} },
+};
+
+$("clientId").value = store.get("spike.clientId");
+$("shareUrl").value = store.get("spike.shareUrl");
+$("rw").checked = store.get("spike.rw") === "1";
+["clientId", "shareUrl"].forEach((id) => $(id).addEventListener("change", () => store.set("spike." + id, $(id).value.trim())));
+$("rw").addEventListener("change", () => store.set("spike.rw", $("rw").checked ? "1" : ""));
+
+function log(cls, text) {
+  const li = document.createElement("li");
+  li.className = cls;
+  li.textContent = text;
+  $("log").appendChild(li);
+}
+
+function scopes() {
+  const s = ["User.Read", "Files.Read.All"];
+  if ($("rw").checked) s.push("Files.ReadWrite");
+  return s;
+}
+
+let msalApp = null;
+
+async function initMsal() {
+  const clientId = $("clientId").value.trim();
+  if (!clientId) return null;
+  msalApp = new msal.PublicClientApplication({
+    auth: {
+      clientId,
+      authority: "https://login.microsoftonline.com/consumers", // 個人用 Microsoft アカウントのみ
+      redirectUri: window.location.origin + "/",
+    },
+    cache: { cacheLocation: "sessionStorage" },
+  });
+  await msalApp.initialize();
+  const res = await msalApp.handleRedirectPromise(); // サインインから戻ってきたとき
+  const account = (res && res.account) || msalApp.getAllAccounts()[0];
+  if (account) msalApp.setActiveAccount(account);
+  return account;
+}
+
+function showAccount(account) {
+  $("who").textContent = account ? `サインイン中: ${account.username}` : "";
+  $("run").disabled = !account;
+  $("signout").disabled = !account;
+}
+
+async function getToken() {
+  const request = { scopes: scopes(), account: msalApp.getActiveAccount() };
+  try {
+    return (await msalApp.acquireTokenSilent(request)).accessToken;
+  } catch (e) {
+    await msalApp.acquireTokenRedirect(request); // 同意が必要なときはサインイン画面へ
+    throw new Error("サインイン画面へ移動します");
+  }
+}
+
+async function graph(token, path) {
+  const res = await fetch(GRAPH + path, { headers: { Authorization: "Bearer " + token } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = body.error || {};
+    throw new Error(`HTTP ${res.status} ${err.code || ""} ${err.message || ""}`.trim());
+  }
+  return body;
+}
+
+// 共有リンク → Graph の shareId("u!" + base64url)
+function encodeSharingUrl(url) {
+  const bytes = new TextEncoder().encode(url);
+  let bin = "";
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  return "u!" + btoa(bin).replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
+}
+
+function fmt(v) {
+  if (v instanceof Date) {
+    const p = (n) => String(n).padStart(2, "0");
+    return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`;
+  }
+  return v == null ? "" : String(v);
+}
+
+// シートを {見出し: 値} の配列にする(見出しは改行の前で照合。Python 版と同じ)
+function sheetRows(ws) {
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  if (!rows.length) return [];
+  const names = rows[0].map((h) => (h == null ? "" : String(h).trim().split("\n")[0]));
+  return rows.slice(1).map((cells) => {
+    const o = {};
+    names.forEach((n, i) => { if (n) o[n] = cells[i] ?? null; });
+    return o;
+  });
+}
+
+async function runTest() {
+  $("log").innerHTML = "";
+  $("result").innerHTML = "";
+  const shareUrl = $("shareUrl").value.trim();
+  if (!shareUrl) { log("ng", "共有リンクを入力してください"); return; }
+
+  let token;
+  try {
+    token = await getToken();
+    log("ok", `アクセストークン取得(要求した権限: ${scopes().join(", ")})`);
+  } catch (e) { log("ng", "トークン取得: " + e.message); return; }
+
+  try {
+    const me = await graph(token, "/me");
+    log("ok", `/me: ${me.displayName || ""} ${me.userPrincipalName || me.mail || ""}`);
+  } catch (e) { log("ng", "/me: " + e.message); }
+
+  // 1. 共有リンクからファイルを特定
+  let item;
+  try {
+    item = await graph(token, `/shares/${encodeSharingUrl(shareUrl)}/driveItem`);
+    log("ok", `共有リンクからファイルを特定: ${item.name}(${item.size} バイト)\n` +
+      `最終更新: ${item.lastModifiedDateTime} / ${item.lastModifiedBy?.user?.displayName || "?"}\n` +
+      `driveId=${item.parentReference?.driveId}  itemId=${item.id}`);
+  } catch (e) {
+    log("ng", "共有リンクからファイルを特定: " + e.message +
+      ($("rw").checked ? "" : "\n→ 「Files.ReadWrite も要求する」にチェックしてもう一度試してください"));
+    return;
+  }
+
+  // 2. driveId / itemId で直接たどれるか(本番アプリで使うかもしれない経路)
+  const driveId = item.parentReference?.driveId;
+  try {
+    const direct = await graph(token, `/drives/${driveId}/items/${item.id}?$select=id,name`);
+    log("ok", `driveId/itemId で直接取得: ${direct.name}`);
+  } catch (e) { log("ng", "driveId/itemId で直接取得: " + e.message); }
+
+  // 3. ダウンロード(事前認証済み URL。無ければ /content)
+  let buf;
+  try {
+    const url = item["@microsoft.graph.downloadUrl"];
+    let res;
+    if (url) {
+      res = await fetch(url);
+    } else {
+      res = await fetch(`${GRAPH}/shares/${encodeSharingUrl(shareUrl)}/driveItem/content`, { headers: { Authorization: "Bearer " + token } });
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    buf = await res.arrayBuffer();
+    log("ok", `ダウンロード: ${buf.byteLength} バイト(${url ? "downloadUrl" : "/content"})`);
+  } catch (e) { log("ng", "ダウンロード: " + e.message); return; }
+
+  // 4. 解析
+  let wb;
+  try {
+    wb = XLSX.read(buf, { cellDates: true });
+    log("ok", "シート: " + wb.SheetNames.join(" / "));
+  } catch (e) { log("ng", "Excel の解析: " + e.message); return; }
+
+  const need = ["WS", "タスク一覧"];
+  const missing = need.filter((n) => !wb.SheetNames.includes(n));
+  if (missing.length) { log("ng", "シートがありません: " + missing.join(", ")); return; }
+
+  const wsRows = sheetRows(wb.Sheets["WS"]).filter((r) => r["WS名"]);
+  const tasks = sheetRows(wb.Sheets["タスク一覧"]).filter((r) => r["WS名"]);
+  const others = wb.SheetNames.includes("個別タスク")
+    ? sheetRows(wb.Sheets["個別タスク"]).filter((r) => r["WS名"] || r["タスク名"]) : [];
+  log("info", `WS: ${wsRows.length} 件 / タスク一覧: ${tasks.length} 件 / 個別タスク: ${others.length} 件`);
+  if (wsRows.length && !tasks.length) {
+    log("ng", "タスク一覧に計算結果がありません(Excel で開いて保存されていない可能性)");
+  } else if (tasks.length) {
+    const withDate = tasks.filter((t) => t["開始日"] instanceof Date).length;
+    log("ok", `数式の計算結果を読めた: 開始日あり ${withDate} 件 / 未定 ${tasks.length - withDate} 件`);
+  }
+
+  const cols = ["WS名", "タスク名", "開始日", "終了日", "担当者", "ステータス"];
+  const table = document.createElement("table");
+  table.innerHTML = "<tr>" + cols.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+  tasks.slice(0, 10).forEach((t) => {
+    const tr = document.createElement("tr");
+    cols.forEach((c) => { const td = document.createElement("td"); td.textContent = fmt(t[c]); tr.appendChild(td); });
+    table.appendChild(tr);
+  });
+  const cap = document.createElement("p");
+  cap.className = "note";
+  cap.textContent = "タスク一覧の先頭10件(Mac で開いたときの内容と同じか確認してください)";
+  $("result").append(cap, table);
+}
+
+$("signin").addEventListener("click", async () => {
+  store.set("spike.clientId", $("clientId").value.trim());
+  store.set("spike.shareUrl", $("shareUrl").value.trim());
+  try {
+    if (!msalApp) await initMsal();
+    if (!msalApp) { log("ng", "クライアント ID を入力してください"); return; }
+    await msalApp.loginRedirect({ scopes: scopes(), prompt: "select_account" });
+  } catch (e) { log("ng", "サインイン: " + e.message); }
+});
+
+$("run").addEventListener("click", () => runTest().catch((e) => log("ng", e.message)));
+
+$("signout").addEventListener("click", async () => {
+  if (msalApp) await msalApp.logoutRedirect({ postLogoutRedirectUri: window.location.origin + "/" });
+});
+
+// ページを開いたとき(サインインから戻ってきたときも)の処理
+(async () => {
+  if (window.location.hostname === "127.0.0.1") {
+    log("ng", "http://localhost:8000/ で開いてください(127.0.0.1 はリダイレクト URI と一致しません)");
+    return;
+  }
+  try {
+    const account = await initMsal();
+    showAccount(account);
+    if (account) log("info", "サインイン済みです。「読み取りテスト」を押してください。");
+  } catch (e) {
+    log("ng", "サインイン処理: " + e.message);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "js-parity",
+  "private": true,
+  "description": "docs/js/excel_source.js と app/services/excel_source.py の出力が同じか確かめる",
+  "dependencies": { "xlsx": "0.18.5" }
+}

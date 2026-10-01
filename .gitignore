@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# スケジュールの実データ(担当者名などを含むためGitに載せない)。
+# 空のブックは python -m tools.make_schedule_workbook で作り直せる
+data/*.xlsx
+data/~$*.xlsx
+
+# Node(tools/js_parity)
+node_modules/
+
+# OS / エディタ
+.DS_Store
