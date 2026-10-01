@@ -1,6 +1,6 @@
 """pytest共通フィクスチャ。
 
-ブックは tools/make_schedule_workbook.py で実際に作り、数式の入ったタスク一覧だけを
+ブックは tools/make_schedule_workbook.py で実際に作り、タスク一覧の自動計算の列(開始日など)は
 「Excelが保存した計算結果」に見立てた値で上書きする(テスト環境では数式を計算できないため)。
 """
 
@@ -36,7 +36,9 @@ def d(s):  # noqa: D103
     return datetime.strptime(s, "%Y/%m/%d")
 
 
-# タスク一覧の計算結果(A〜L列)
+# タスク一覧の値(WS名・タスク名など)と計算結果(開始日など)。列は見出し名で対応させる(TASK_COLUMNS)
+TASK_COLUMNS = ["No", "WS名", "タスク名", "並び順", "作業日数", "日付決定有無", "開始日の決め方", "開始日", "終了日",
+                "担当者", "ステータス", "警告", "メモ"]
 TASK_ROWS = [
     # No, WS名, タスク名, 並び順, 作業日数, 日付決定有無, 開始日の決め方, 開始日, 終了日, 担当者, ステータス, 警告, メモ
     [1, "WS 秋", "コンテンツ開発", 1, 28, "No", "自動", d("2026/10/01"), d("2026/10/28"), "田中 三郎", "完了", None, "担当者だけ"],
@@ -59,18 +61,23 @@ def other_row(ws, name, start=None, end=None, days=None, status=None, names=(), 
     return [ws, name, start, end, days, status] + list(names) + [None] * (10 - len(names)) + [memo]
 
 
-def fill(path, ws_rows=(), task_rows=(), other_rows=(), members=()):
+def headers(ws):
+    return {str(c.value).split("\n")[0]: c.column for c in ws[1] if c.value}
+
+
+def fill(path, ws_rows=(), task_rows=(), other_rows=(), members=(), task_columns=TASK_COLUMNS):
     wb = load_workbook(path)
-    for sheet, rows, first_col in (
-        ("WS", ws_rows, 1),
-        ("タスク一覧", task_rows, 1),
-        ("個別タスク", other_rows, 1),
-        ("メンバー", members, 1),
-    ):
+    for sheet, rows in (("WS", ws_rows), ("個別タスク", other_rows), ("メンバー", members)):
         ws = wb[sheet]
         for i, row in enumerate(rows, start=2):
-            for j, v in enumerate(row, start=first_col):
+            for j, v in enumerate(row, start=1):
                 ws.cell(row=i, column=j, value=v)
+    t = wb["タスク一覧"]
+    cols = headers(t)
+    for i, row in enumerate(task_rows, start=2):
+        for name, v in zip(task_columns, row):
+            if name in cols:  # 「No」は今の形式には無い
+                t.cell(row=i, column=cols[name], value=v)
     wb.save(path)
 
 

@@ -5,12 +5,13 @@ Excel が唯一の正(Single Source of Truth)。Webアプリは読むだけで�
 
 読むシート:
     WS         : 行の一覧(WS名・種別・並び順)
-    タスク一覧 : 数式で計算済みのタスク(開始日・終了日・担当者・警告)
+    タスク一覧 : 1行 = 1タスク。WS名・タスク名などは値、開始日・終了日・担当者・警告は数式の計算結果
+                 (WSのタスクは「タスク生成」シートから値として貼り付けて作る)
     個別タスク : マスタから自動で作らない作業(社内MTGなど)
     メンバー   : 担当者の並び順
     タスクマスタ: /api/task-masters 用
 
-注意: タスク一覧は数式なので、Excel が保存した「計算結果」を読む(openpyxl の data_only)。
+注意: タスク一覧の日付などは数式なので、Excel が保存した「計算結果」を読む(openpyxl の data_only)。
 openpyxl など Excel 以外で作っただけのファイルには計算結果が無いため、一度 Excel で
 開いて保存してから読ませる必要がある(その場合は ExcelNotCalculatedError)。
 
@@ -31,6 +32,7 @@ SHEET_TASKS = "タスク一覧"
 SHEET_OTHER = "個別タスク"
 SHEET_MEMBERS = "メンバー"
 SHEET_MASTERS = "タスクマスタ"
+SHEET_OLD_INPUT = "日程入力"  # 旧形式(タスク一覧を数式で自動生成していた頃)のブックにだけある
 UNDECIDED = "未定"
 CATEGORY_WORKSHOP = "ワークショップ"
 CATEGORY_OTHER = "その他"
@@ -259,12 +261,17 @@ def _read_tasks(wb, book):
     ws = _require(wb, SHEET_TASKS)
     workshops = [p for p in book.projects if p["project_category"] == CATEGORY_WORKSHOP]
     has_masters = any(m["auto_generate"] for m in book.task_masters)
-    found = 0
+    found = calculated = 0
+    no_formula = []  # 計算の数式が入っていない行(途中に挿入した行など)
     for row_no, r in _rows(ws):
         ws_name = _text(r.get("WS名"))
         if not ws_name:
             continue
         found += 1
+        if _text(r.get("開始日の決め方")) is None:
+            no_formula.append(row_no)
+        else:
+            calculated += 1
         project = projects.get(ws_name)
         if project is None:
             book.warnings.append(f"[タスク一覧] {row_no}行目: WS「{ws_name}」がWSシートにありません")
@@ -284,11 +291,26 @@ def _read_tasks(wb, book):
                 source="タスク一覧",
             )
         )
-    # ワークショップがあるのにタスク一覧が空 = 数式の計算結果がファイルに保存されていない
-    if workshops and has_masters and found == 0:
-        raise ExcelNotCalculatedError(
-            "タスク一覧に計算結果がありません。Excel(ブラウザ版可)でファイルを一度開いて保存してから再読み込みしてください。"
+    not_calculated = ExcelNotCalculatedError(
+        "タスク一覧に計算結果がありません。Excel(ブラウザ版可)でファイルを一度開いて保存してから再読み込みしてください。"
+    )
+    # タスクの行はあるのに自動計算の列がすべて空 = 数式の計算結果がファイルに保存されていない
+    if found and calculated == 0:
+        raise not_calculated
+    # 旧形式: ワークショップがあるのにタスク一覧が空 = 計算結果が保存されていない
+    if SHEET_OLD_INPUT in wb.sheetnames and workshops and has_masters and found == 0:
+        raise not_calculated
+    for row_no in no_formula:
+        book.warnings.append(
+            f"[タスク一覧] {row_no}行目: 自動計算の数式が入っていません(途中に挿入した行は、一番下の空き行に追加し直してください)"
         )
+    # タスクをまだ生成していないワークショップ
+    with_tasks = {t["project_id"] for t in book.tasks}
+    for p in workshops:
+        if p["project_id"] not in with_tasks:
+            book.warnings.append(
+                f"[WS] 「{p['project_name']}」のタスクがまだありません(Excel の「タスク生成」シートで作ってタスク一覧に貼り付けてください)"
+            )
 
 
 def _read_other_tasks(wb, book):

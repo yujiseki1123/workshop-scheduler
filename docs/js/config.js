@@ -8,7 +8,7 @@
  */
 window.APP_CONFIG = {
   clientId: "10997d16-6ad4-4622-8ede-004a34f06027",
-  shareUrl: "https://1drv.ms/x/c/9E6F1B8A9E5D1375/AdFtwOfLD7hDgtHuw1FuObk?e=cO1q4Z",
+  shareUrl: "https://1drv.ms/x/c/9E6F1B8A9E5D1375/AR0nBWKLrshPq6iOYyIYA2c?e=1Uzaqf",
 
   // Microsoft Graph に要求する権限。フェーズ2の試作で「Files.ReadWrite も要求する」に
   // チェックしないと読めなかった場合は "Files.ReadWrite" を足す(Entra 側にも追加が必要)。

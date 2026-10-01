@@ -6,7 +6,8 @@
  *
  * 読むシート:
  *   WS          : 行の一覧(WS名・種別・並び順)
- *   タスク一覧  : 数式で計算済みのタスク(開始日・終了日・担当者・警告)
+ *   タスク一覧  : 1行 = 1タスク。WS名・タスク名などは値、開始日・終了日・担当者・警告は数式の計算結果
+ *                 (WSのタスクは「タスク生成」シートから値として貼り付けて作る)
  *   個別タスク  : マスタから自動で作らない作業(社内MTGなど)
  *   メンバー    : 担当者の並び順
  *   タスクマスタ: 参照用
@@ -32,6 +33,7 @@
   const SHEET_OTHER = "個別タスク";
   const SHEET_MEMBERS = "メンバー";
   const SHEET_MASTERS = "タスクマスタ";
+  const SHEET_OLD_INPUT = "日程入力"; // 旧形式(タスク一覧を数式で自動生成していた頃)のブックにだけある
   const UNDECIDED = "未定";
   const CATEGORY_WORKSHOP = "ワークショップ";
   const ASSIGNEE_SEPARATOR = "、";
@@ -280,10 +282,14 @@
     const workshops = book.projects.filter((p) => p.project_category === CATEGORY_WORKSHOP);
     const hasMasters = book.task_masters.some((m) => m.auto_generate);
     let found = 0;
+    let calculated = 0;
+    const noFormula = []; // 計算の数式が入っていない行(途中に挿入した行など)
     for (const [rowNo, r] of rows(ws)) {
       const wsName = text(get(r, "WS名"));
       if (!wsName) continue;
       found += 1;
+      if (text(get(r, "開始日の決め方")) === null) noFormula.push(rowNo);
+      else calculated += 1;
       const project = projects.get(wsName);
       if (!project) {
         book.warnings.push(`[タスク一覧] ${rowNo}行目: WS「${wsName}」がWSシートにありません`);
@@ -307,11 +313,27 @@
         })
       );
     }
-    // ワークショップがあるのにタスク一覧が空 = 数式の計算結果がファイルに保存されていない
-    if (workshops.length && hasMasters && found === 0) {
-      throw new ExcelNotCalculatedError(
+    const notCalculated = () =>
+      new ExcelNotCalculatedError(
         "タスク一覧に計算結果がありません。Excel(ブラウザ版可)でファイルを一度開いて保存してから再読み込みしてください。"
       );
+    // タスクの行はあるのに自動計算の列がすべて空 = 数式の計算結果がファイルに保存されていない
+    if (found && calculated === 0) throw notCalculated();
+    // 旧形式: ワークショップがあるのにタスク一覧が空 = 計算結果が保存されていない
+    if (wb.SheetNames.includes(SHEET_OLD_INPUT) && workshops.length && hasMasters && found === 0) throw notCalculated();
+    for (const rowNo of noFormula) {
+      book.warnings.push(
+        `[タスク一覧] ${rowNo}行目: 自動計算の数式が入っていません(途中に挿入した行は、一番下の空き行に追加し直してください)`
+      );
+    }
+    // タスクをまだ生成していないワークショップ
+    const withTasks = new Set(book.tasks.map((t) => t.project_id));
+    for (const p of workshops) {
+      if (!withTasks.has(p.project_id)) {
+        book.warnings.push(
+          `[WS] 「${p.project_name}」のタスクがまだありません(Excel の「タスク生成」シートで作ってタスク一覧に貼り付けてください)`
+        );
+      }
     }
   }
 

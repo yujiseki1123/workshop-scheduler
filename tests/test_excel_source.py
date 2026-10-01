@@ -5,7 +5,7 @@ import shutil
 import pytest
 
 from app.services.excel_source import ExcelNotCalculatedError, ExcelSourceError, parse_workbook
-from tests.conftest import TEN, d, fill
+from tests.conftest import TASK_ROWS, TEN, d, fill
 
 
 # ---------------------------------------------------------------------------
@@ -89,13 +89,51 @@ def test_empty_book_has_no_data(empty_book):
 
 
 def test_not_calculated_book_is_reported(empty_book, tmp_path):
-    """ワークショップがあるのにタスク一覧に計算結果が無い(Excelで保存されていない)。"""
+    """タスクの行はあるのに自動計算の列が空(openpyxl で作っただけで Excel で保存されていない)。"""
 
     path = tmp_path / "raw.xlsx"
     shutil.copy(empty_book, path)
-    fill(path, ws_rows=[["WS 秋", "ワークショップ", 1, d("2026/10/01"), None]])
+    fill(path, ws_rows=[["WS 秋", "ワークショップ", 1, d("2026/10/01"), None]],
+         task_rows=[["WS 秋", "コンテンツ開発", 1, 28, "No"]], task_columns=["WS名", "タスク名", "並び順", "所要日数", "日付決定有無"])
     with pytest.raises(ExcelNotCalculatedError):
         parse_workbook(str(path))
+
+
+def test_workshop_without_tasks_is_warned(empty_book, tmp_path):
+    """タスクをまだ生成していないWSは、エラーにせず注意として出す。"""
+
+    path = tmp_path / "new_ws.xlsx"
+    shutil.copy(empty_book, path)
+    fill(path, ws_rows=[["WS 秋", "ワークショップ", 1, d("2026/10/01"), None], ["その他", "その他", 99, None, None]])
+    book = parse_workbook(str(path))
+    assert book.tasks == []
+    assert any("「WS 秋」のタスクがまだありません" in w for w in book.warnings)
+    assert not any("その他" in w for w in book.warnings)
+
+
+def test_row_without_formulas_is_warned(book_path):
+    """途中に挿入した行など、自動計算の数式が無い行は注意に出す(表示は未定)。"""
+
+    fill(book_path, task_rows=TASK_ROWS + [["", "WS 秋", "挿入した行", 2, None, "No"]],
+         ws_rows=[["Snow Dorm", "ワークショップ", 2, d("2026/11/02"), "企画中"],
+                  ["WS 秋", "ワークショップ", 1, d("2026/10/01"), "準備中"], ["その他", "その他", 99, None, None]])
+    book = parse_workbook(str(book_path))
+    assert any("9行目: 自動計算の数式が入っていません" in w for w in book.warnings)
+    t = next(t for t in book.tasks if t["task_name"] == "挿入した行")
+    assert t["is_undecided"]
+
+
+def test_old_format_book_still_reads(tmp_path):
+    """旧形式(日程入力あり)のブックも読める(移行前のファイルを開いたとき用)。"""
+
+    from pathlib import Path
+
+    from openpyxl import load_workbook
+    old = Path(__file__).resolve().parents[1] / "data" / "workshop_schedule.xlsx"
+    if not old.exists() or "日程入力" not in load_workbook(old, read_only=True).sheetnames:
+        pytest.skip("旧形式のブックが無い")
+    book = parse_workbook(str(old))
+    assert book.tasks
 
 
 def test_missing_file(tmp_path):
