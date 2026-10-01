@@ -8,7 +8,7 @@
  *   WS          : 行の一覧(WS名・種別・並び順)
  *   タスク一覧  : 1行 = 1タスク。WS名・タスク名などは値、開始日・終了日・担当者・警告は数式の計算結果
  *                 (WSのタスクは「タスク生成」シートから値として貼り付けて作る)
- *   個別タスク  : マスタから自動で作らない作業(社内MTGなど)
+ *   個別タスク  : WSに属さない作業(社内MTGなど)。WS名が空欄なら「その他」
  *   メンバー    : 担当者の並び順
  *   タスクマスタ: 参照用
  *
@@ -36,6 +36,7 @@
   const SHEET_OLD_INPUT = "日程入力"; // 旧形式(タスク一覧を数式で自動生成していた頃)のブックにだけある
   const UNDECIDED = "未定";
   const CATEGORY_WORKSHOP = "ワークショップ";
+  const CATEGORY_OTHER = "その他";
   const ASSIGNEE_SEPARATOR = "、";
   const STATUSES = ["未着手", "着手中", "完了"];
   const DEFAULT_STATUS = "未着手";
@@ -337,6 +338,28 @@
     }
   }
 
+  /**
+   * 個別タスクの WS名が空欄のときに入れる「その他」の行。
+   * WSシートに種別「その他」の行があればそれ(複数あれば並び順が最初のもの)、無ければ
+   * 「その他」という名前の行、それも無ければ「その他」の行を自動で作る(画面では一番下に出る)。
+   */
+  function otherProject(book) {
+    const byCategory = book.projects.find((p) => p.project_category === CATEGORY_OTHER);
+    if (byCategory) return byCategory;
+    const byName = book.projects.find((p) => p.project_name === CATEGORY_OTHER);
+    if (byName) return byName;
+    const project = {
+      project_id: Math.max(0, ...book.projects.map((p) => p.project_id)) + 1,
+      project_name: CATEGORY_OTHER,
+      project_category: CATEGORY_OTHER,
+      sort_order: 9999,
+      start_date: null,
+      status: null,
+    };
+    book.projects.push(project);
+    return project;
+  }
+
   function readOtherTasks(wb, book) {
     if (!wb.SheetNames.includes(SHEET_OTHER)) return;
     const projects = new Map(book.projects.map((p) => [p.project_name, p]));
@@ -345,9 +368,14 @@
       const name = text(get(r, "タスク名"));
       if (!wsName && !name) continue;
       const where = `[個別タスク] ${rowNo}行目`;
-      const project = projects.get(wsName);
-      if (!project || !name) {
-        book.warnings.push(`${where}: WS名・タスク名を確認してください(WS「${wsName === null ? "None" : wsName}」)`);
+      if (!name) {
+        book.warnings.push(`${where}: タスク名が空欄です`);
+        continue;
+      }
+      // WS名が空欄 = WSに属さない作業 →「その他」
+      const project = !wsName ? otherProject(book) : projects.get(wsName);
+      if (!project) {
+        book.warnings.push(`${where}: WS「${wsName}」がWSシートにありません`);
         continue;
       }
       const start = toDate(get(r, "開始日"));

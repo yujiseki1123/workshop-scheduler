@@ -5,7 +5,7 @@ import shutil
 import pytest
 
 from app.services.excel_source import ExcelNotCalculatedError, ExcelSourceError, parse_workbook
-from tests.conftest import TASK_ROWS, TEN, d, fill
+from tests.conftest import TASK_ROWS, TEN, d, fill, other_row
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +51,31 @@ def test_other_tasks_and_warnings(book_path):
     mtg = next(t for t in book.tasks if t["task_name"] == "社内MTG")
     assert (mtg["start_date"], mtg["end_date"], mtg["source"]) == ("2026-10-06", "2026-10-06", "個別タスク")
     assert any("存在しないWS" in w for w in book.warnings)
+
+
+def test_other_task_without_ws_goes_to_other(book_path):
+    """個別タスクの WS名が空欄なら「その他」(WSシートの種別「その他」の行)に入る。"""
+
+    fill(book_path, other_rows=[other_row(None, "空欄WSの作業", d("2026/10/08"), days=2), other_row(None, None)])
+    book = parse_workbook(str(book_path))
+    t = next(t for t in book.tasks if t["task_name"] == "空欄WSの作業")
+    other = next(p for p in book.projects if p["project_category"] == "その他")
+    assert t["project_id"] == other["project_id"]
+    assert [p["project_name"] for p in book.projects].count("その他") == 1
+
+
+def test_other_project_is_created_when_missing(empty_book, tmp_path):
+    """WSシートに「その他」が無くても、WS名が空欄の個別タスクのために「その他」の行を用意する。"""
+
+    path = tmp_path / "no_other.xlsx"
+    shutil.copy(empty_book, path)
+    fill(path, ws_rows=[["WS 秋", "ワークショップ", 1, d("2026/10/01"), None]],
+         other_rows=[other_row(None, "社内MTG", d("2026/10/06"), days=1), other_row("無いWS", "打合せ", d("2026/10/07"))])
+    book = parse_workbook(str(path))
+    other = book.projects[-1]
+    assert (other["project_name"], other["project_category"]) == ("その他", "その他")
+    assert [t["task_name"] for t in book.tasks] == ["社内MTG"]
+    assert any("WS「無いWS」がWSシートにありません" in w for w in book.warnings)
 
 
 def test_status_defaults_to_not_started(book_path):

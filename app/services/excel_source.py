@@ -7,7 +7,7 @@ Excel が唯一の正(Single Source of Truth)。Webアプリは読むだけで�
     WS         : 行の一覧(WS名・種別・並び順)
     タスク一覧 : 1行 = 1タスク。WS名・タスク名などは値、開始日・終了日・担当者・警告は数式の計算結果
                  (WSのタスクは「タスク生成」シートから値として貼り付けて作る)
-    個別タスク : マスタから自動で作らない作業(社内MTGなど)
+    個別タスク : WSに属さない作業(社内MTGなど)。WS名が空欄なら「その他」
     メンバー   : 担当者の並び順
     タスクマスタ: /api/task-masters 用
 
@@ -313,6 +313,31 @@ def _read_tasks(wb, book):
             )
 
 
+def _other_project(book):
+    """個別タスクの WS名が空欄のときに入れる「その他」の行。
+
+    WSシートに種別「その他」の行があればそれ(複数あれば並び順が最初のもの)、無ければ
+    「その他」という名前の行、それも無ければ「その他」の行を自動で作る(画面では一番下に出る)。
+    """
+
+    for p in book.projects:
+        if p["project_category"] == CATEGORY_OTHER:
+            return p
+    for p in book.projects:
+        if p["project_name"] == CATEGORY_OTHER:
+            return p
+    project = {
+        "project_id": max((p["project_id"] for p in book.projects), default=0) + 1,
+        "project_name": CATEGORY_OTHER,
+        "project_category": CATEGORY_OTHER,
+        "sort_order": 9999,
+        "start_date": None,
+        "status": None,
+    }
+    book.projects.append(project)
+    return project
+
+
 def _read_other_tasks(wb, book):
     if SHEET_OTHER not in wb.sheetnames:
         return
@@ -322,9 +347,13 @@ def _read_other_tasks(wb, book):
         if not ws_name and not name:
             continue
         where = f"[個別タスク] {row_no}行目"
-        project = projects.get(ws_name)
-        if project is None or not name:
-            book.warnings.append(f"{where}: WS名・タスク名を確認してください(WS「{ws_name}」)")
+        if not name:
+            book.warnings.append(f"{where}: タスク名が空欄です")
+            continue
+        # WS名が空欄 = WSに属さない作業 →「その他」
+        project = _other_project(book) if not ws_name else projects.get(ws_name)
+        if project is None:
+            book.warnings.append(f"{where}: WS「{ws_name}」がWSシートにありません")
             continue
         start = _date(r.get("開始日"))
         end = _date(r.get("終了日"))
